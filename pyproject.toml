@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cryptocore"
+version = "0.1.0"
+description = "Минималистический консольный криптографический провайдер AES"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "pycryptodome>=3.20,<4",
+]
+
+[project.scripts]
+cryptocore = "cryptocore.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
