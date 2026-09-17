@@ -8,4 +8,6 @@ build/
 dist/
 *.enc
 *.dec
-
+original.txt
+encrypted.bin
+decrypted.txt
