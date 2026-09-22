@@ -1,6 +1,7 @@
 """Интерфейс командной строки CryptoCore."""
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Optional, Sequence
 from cryptocore.errors import CryptoCoreError, InvalidKeyError
 from cryptocore.file_io import read_binary_file, write_binary_file
 from cryptocore.modes.ecb import decrypt_ecb, encrypt_ecb
+from cryptocore.modes.feedback import MODES
 
 
 def _translate_parser_error(message: str) -> str:
@@ -77,19 +79,28 @@ def _hex_key(value: str) -> bytes:
     return key
 
 
+def _hex_iv(value: str) -> bytes:
+    if re.fullmatch(r"[0-9a-fA-F]{32}", value) is None:
+        raise argparse.ArgumentTypeError("IV должен содержать ровно 32 шестнадцатеричных символа")
+    return bytes.fromhex(value)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = RussianArgumentParser(
         prog="cryptocore",
-        description="Шифрование и расшифрование файлов с помощью AES-128 ECB.",
+        description="Шифрование и расшифрование файлов с помощью AES-128.",
+        allow_abbrev=False,
     )
     parser.add_argument("--algorithm", required=True, choices=("aes",))
-    parser.add_argument("--mode", required=True, choices=("ecb",))
+    parser.add_argument("--mode", required=True, choices=("ecb", *MODES))
 
     operation = parser.add_mutually_exclusive_group(required=True)
     operation.add_argument("--encrypt", action="store_true", help="зашифровать входной файл")
     operation.add_argument("--decrypt", action="store_true", help="расшифровать входной файл")
 
     parser.add_argument("--key", required=True, type=_hex_key, metavar="KEY")
+    parser.add_argument("--iv", type=_hex_iv, metavar="IV",
+                        help="IV в hex для расшифрования файла без заголовка")
     parser.add_argument("--input", required=True, type=Path, metavar="INPUT_FILE")
     parser.add_argument("--output", type=Path, metavar="OUTPUT_FILE")
     return parser
@@ -105,10 +116,24 @@ def run(args: argparse.Namespace) -> Path:
     output_path: Path = args.output or _default_output(input_path, args.encrypt)
 
     data = read_binary_file(input_path)
-    if args.encrypt:
-        result = encrypt_ecb(data, args.key)
+    if args.mode == "ecb":
+        operation = encrypt_ecb if args.encrypt else decrypt_ecb
+        result = operation(data, args.key)
     else:
-        result = decrypt_ecb(data, args.key)
+        encrypt, decrypt = MODES[args.mode]
+        if args.encrypt:
+            try:
+                iv = os.urandom(16)
+            except OSError as error:
+                raise CryptoCoreError("не удалось сгенерировать случайный IV") from error
+            result = iv + encrypt(data, args.key, iv)
+        else:
+            iv = args.iv
+            if iv is None:
+                if len(data) < 16:
+                    raise CryptoCoreError("файл слишком короткий: необходимы 16 байт IV")
+                iv, data = data[:16], data[16:]
+            result = decrypt(data, args.key, iv)
     write_binary_file(output_path, result)
     return output_path
 
@@ -117,6 +142,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     _configure_console_encoding()
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.iv is not None:
+        if args.encrypt:
+            parser.error("--iv разрешён только при расшифровании")
+        if args.mode == "ecb":
+            parser.error("режим ECB не использует IV")
     try:
         run(args)
     except InvalidKeyError as error:
