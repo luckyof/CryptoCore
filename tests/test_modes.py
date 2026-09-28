@@ -18,7 +18,7 @@ from cryptocore.cli import main
 from cryptocore.errors import CryptoCoreError
 from cryptocore.modes.feedback import MODES
 
-KEY = bytes.fromhex("000102030405060708090a0b0c0d0e0f")
+KEY = bytes.fromhex("f3a19c742de805b69147ca30856ef2bd")
 IV = bytes.fromhex("000102030405060708090a0b0c0d0e0f")
 SIZES = (0, 1, 15, 16, 17, 31, 32, 33, 257)
 
@@ -85,7 +85,7 @@ class FileModeTests(unittest.TestCase):
                 with self.subTest(mode=mode, size=size):
                     data = bytes(i % 256 for i in range(size))
                     self.source.write_bytes(data)
-                    with patch("cryptocore.cli.os.urandom", return_value=IV) as random:
+                    with patch("cryptocore.cli.generate_random_bytes", return_value=IV) as random:
                         self.assertEqual(main(self.args(mode, "--encrypt")), 0)
                         random.assert_called_once_with(16)
                     envelope = self.output.read_bytes()
@@ -121,7 +121,8 @@ class FileModeTests(unittest.TestCase):
     def test_random_generation_failure_preserves_output(self):
         self.source.write_bytes(b"data")
         self.output.write_bytes(b"keep")
-        with patch("cryptocore.cli.os.urandom", side_effect=OSError("failure")):
+        with patch("cryptocore.cli.generate_random_bytes",
+                   side_effect=CryptoCoreError("не удалось сгенерировать")):
             with contextlib.redirect_stderr(io.StringIO()) as errors:
                 self.assertEqual(main(self.args("cbc", "--encrypt")), 1)
         self.assertIn("не удалось сгенерировать", errors.getvalue())

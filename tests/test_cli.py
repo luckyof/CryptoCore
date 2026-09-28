@@ -7,7 +7,7 @@ from pathlib import Path
 from cryptocore.cli import build_parser, main
 
 
-KEY = "000102030405060708090a0b0c0d0e0f"
+KEY = "f3a19c742de805b69147ca30856ef2bd"
 
 
 class CliTests(unittest.TestCase):

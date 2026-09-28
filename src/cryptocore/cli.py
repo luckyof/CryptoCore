@@ -1,13 +1,13 @@
 """Интерфейс командной строки CryptoCore."""
 
 import argparse
-import os
 import re
 import sys
 from pathlib import Path
 from typing import Optional, Sequence
 
 from cryptocore.errors import CryptoCoreError, InvalidKeyError
+from cryptocore.csprng import generate_random_bytes, is_weak_aes_key
 from cryptocore.file_io import read_binary_file, write_binary_file
 from cryptocore.modes.ecb import decrypt_ecb, encrypt_ecb
 from cryptocore.modes.feedback import MODES
@@ -98,7 +98,8 @@ def build_parser() -> argparse.ArgumentParser:
     operation.add_argument("--encrypt", action="store_true", help="зашифровать входной файл")
     operation.add_argument("--decrypt", action="store_true", help="расшифровать входной файл")
 
-    parser.add_argument("--key", required=True, type=_hex_key, metavar="KEY")
+    parser.add_argument("--key", type=_hex_key, metavar="KEY",
+                        help="ключ AES-128 в hex; при шифровании может генерироваться")
     parser.add_argument("--iv", type=_hex_iv, metavar="IV",
                         help="IV в hex для расшифрования файла без заголовка")
     parser.add_argument("--input", required=True, type=Path, metavar="INPUT_FILE")
@@ -115,25 +116,29 @@ def run(args: argparse.Namespace) -> Path:
     input_path: Path = args.input
     output_path: Path = args.output or _default_output(input_path, args.encrypt)
 
+    key = args.key
+    if key is None:
+        key = generate_random_bytes(16)
+        print(f"[ИНФО] Сгенерирован случайный ключ: {key.hex()}")
+    elif is_weak_aes_key(key):
+        print("cryptocore: предупреждение: указанный ключ выглядит слабым", file=sys.stderr)
+
     data = read_binary_file(input_path)
     if args.mode == "ecb":
         operation = encrypt_ecb if args.encrypt else decrypt_ecb
-        result = operation(data, args.key)
+        result = operation(data, key)
     else:
         encrypt, decrypt = MODES[args.mode]
         if args.encrypt:
-            try:
-                iv = os.urandom(16)
-            except OSError as error:
-                raise CryptoCoreError("не удалось сгенерировать случайный IV") from error
-            result = iv + encrypt(data, args.key, iv)
+            iv = generate_random_bytes(16)
+            result = iv + encrypt(data, key, iv)
         else:
             iv = args.iv
             if iv is None:
                 if len(data) < 16:
                     raise CryptoCoreError("файл слишком короткий: необходимы 16 байт IV")
                 iv, data = data[:16], data[16:]
-            result = decrypt(data, args.key, iv)
+            result = decrypt(data, key, iv)
     write_binary_file(output_path, result)
     return output_path
 
@@ -142,6 +147,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     _configure_console_encoding()
     parser = build_parser()
     args = parser.parse_args(argv)
+    if args.decrypt and args.key is None:
+        parser.error("при расшифровании необходимо указать --key")
     if args.iv is not None:
         if args.encrypt:
             parser.error("--iv разрешён только при расшифровании")
