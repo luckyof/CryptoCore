@@ -82,14 +82,17 @@ def decrypt_ofb(ciphertext: bytes, key: bytes, iv: bytes) -> bytes:
 
 
 def encrypt_ctr(data: bytes, key: bytes, iv: bytes) -> bytes:
-    """CTR: 128-битный счётчик big-endian, инкремент по модулю 2**128."""
+    """Совместимый CTR с 128-битным счётчиком и запретом числового переполнения."""
     cipher = _cipher(key, iv)
     counter = int.from_bytes(iv, "big")
+    blocks = (len(data) + BLOCK_SIZE - 1) // BLOCK_SIZE
+    if blocks > (1 << 128) - counter:
+        raise CryptoCoreError("исчерпан счётчик CTR: требуется новый IV")
     result = bytearray()
     for offset in range(0, len(data), BLOCK_SIZE):
         gamma = cipher.encrypt(counter.to_bytes(BLOCK_SIZE, "big"))
         result.extend(_xor(data[offset:offset + BLOCK_SIZE], gamma))
-        counter = (counter + 1) % (1 << 128)
+        counter += 1
     return bytes(result)
 
 

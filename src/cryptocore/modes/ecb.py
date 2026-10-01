@@ -29,11 +29,13 @@ def _pkcs7_unpad(data: bytes) -> bytes:
         raise InvalidPaddingError("расшифрованные данные имеют некорректное дополнение PKCS#7")
 
     padding_length = data[-1]
-    if padding_length < 1 or padding_length > BLOCK_SIZE:
-        raise InvalidPaddingError("расшифрованные данные имеют некорректное дополнение PKCS#7")
-
-    expected_padding = bytes([padding_length]) * padding_length
-    if data[-padding_length:] != expected_padding:
+    invalid = int(padding_length < 1) | int(padding_length > BLOCK_SIZE)
+    # Проверяем все 16 байтов без раннего выхода по содержимому padding.
+    # Интерпретатор Python не даёт гарантии constant-time; от oracle защищает MAC.
+    for offset in range(1, BLOCK_SIZE + 1):
+        mask = -int(offset <= padding_length)
+        invalid |= (data[-offset] ^ padding_length) & mask
+    if invalid:
         raise InvalidPaddingError("расшифрованные данные имеют некорректное дополнение PKCS#7")
     return data[:-padding_length]
 

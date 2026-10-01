@@ -13,3 +13,4 @@ encrypted.bin
 decrypted.txt
 nist_test_data.bin
 nist_results.txt
+*.key

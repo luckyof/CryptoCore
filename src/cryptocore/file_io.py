@@ -33,3 +33,18 @@ def write_binary_file(path: Path, data: bytes) -> None:
         raise CryptoCoreError(f"нет прав на запись выходного файла: '{path}'") from error
     except OSError as error:
         raise CryptoCoreError(f"не удалось записать выходной файл: '{path}'") from error
+
+
+def write_text_file(path: Path, text: str) -> None:
+    """Записать текст в UTF-8 без изменения переданных переводов строк."""
+    try:
+        with path.open("w", encoding="utf-8", newline="") as destination:
+            destination.write(text)
+    except FileNotFoundError as error:
+        raise CryptoCoreError(f"каталог выходного файла не найден: '{path.parent}'") from error
+    except IsADirectoryError as error:
+        raise CryptoCoreError(f"вместо выходного файла указан каталог: '{path}'") from error
+    except PermissionError as error:
+        raise CryptoCoreError(f"нет прав на запись выходного файла: '{path}'") from error
+    except OSError as error:
+        raise CryptoCoreError(f"не удалось записать выходной файл: '{path}'") from error

@@ -52,10 +52,14 @@ class ModeTests(unittest.TestCase):
                 with self.assertRaises(CryptoCoreError):
                     operation(b"x" * 16, b"short", IV)
 
-    def test_ctr_carry_and_wrap(self):
+    def test_ctr_carry_and_overflow_rejection(self):
         encrypt, _ = MODES["ctr"]
-        for iv in (bytes.fromhex("00" * 15 + "ff"), b"\xff" * 16):
-            self.assertEqual(encrypt(b"x" * 49, KEY, iv), reference("ctr", iv).encrypt(b"x" * 49))
+        iv = bytes.fromhex("00" * 15 + "ff")
+        self.assertEqual(encrypt(b"x" * 49, KEY, iv), reference("ctr", iv).encrypt(b"x" * 49))
+        iv = b"\xff" * 16
+        self.assertEqual(encrypt(b"x" * 16, KEY, iv), reference("ctr", iv).encrypt(b"x" * 16))
+        with self.assertRaisesRegex(CryptoCoreError, "исчерпан счётчик"):
+            encrypt(b"x" * 17, KEY, iv)
 
     def test_cbc_invalid_length_and_padding(self):
         decrypt = MODES["cbc"][1]

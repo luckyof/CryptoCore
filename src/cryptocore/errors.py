@@ -15,3 +15,7 @@ class InvalidCiphertextError(CryptoCoreError):
 
 class InvalidPaddingError(CryptoCoreError):
     """Расшифрованные данные содержат некорректное дополнение PKCS#7."""
+
+
+class AuthenticationError(CryptoCoreError):
+    """Подлинность зашифрованных данных не подтверждена."""
