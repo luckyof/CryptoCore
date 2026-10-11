@@ -83,9 +83,9 @@ class DigestCliTests(unittest.TestCase):
         self.assertEqual(stdout.getvalue(), f"{hashlib.sha256(self.data).hexdigest()}  -\n")
 
     def test_encryption_arguments_are_rejected(self):
-        for forbidden in ("--key", "--mode", "--encrypt", "--decrypt", "--iv"):
+        for forbidden in ("--mode", "--encrypt", "--decrypt", "--iv"):
             arguments = ["--algorithm", "sha256", "--input", str(self.source), forbidden]
-            if forbidden in ("--key", "--mode", "--iv"):
+            if forbidden in ("--mode", "--iv"):
                 arguments.append("value")
             with self.subTest(argument=forbidden):
                 errors = io.StringIO()

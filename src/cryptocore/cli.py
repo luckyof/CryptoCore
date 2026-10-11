@@ -11,6 +11,7 @@ from cryptocore.csprng import generate_random_bytes, is_weak_aes_key
 from cryptocore.file_io import read_binary_file, write_binary_file, write_text_file
 from cryptocore.hashes import ALGORITHMS
 from cryptocore.hashes.file_hash import hash_file, hash_stream
+from cryptocore.mac import hmac_file, hmac_stream, read_expected_hmac, verify_hmac
 from cryptocore.key_files import load_key_file, save_key_file
 from cryptocore.modes.gcm import encrypt_gcm, decrypt_gcm
 from cryptocore.modes.authenticated import (
@@ -111,6 +112,12 @@ def _hex_aad(value: str) -> bytes:
     return bytes.fromhex(value)
 
 
+def _hex_hmac_key(value: str) -> bytes:
+    if re.fullmatch(r"(?:[0-9a-fA-F]{2})*", value) is None:
+        raise argparse.ArgumentTypeError("ключ HMAC должен содержать чётное число hex-символов без пробелов")
+    return bytes.fromhex(value)
+
+
 def _ctr_segment_size(value: str) -> int:
     if not value.isdecimal() or not 1 <= int(value) <= MAX_SEGMENT_SIZE:
         raise argparse.ArgumentTypeError(f"размер сегмента должен быть от 1 до {MAX_SEGMENT_SIZE} байт")
@@ -153,15 +160,19 @@ def build_digest_parser() -> argparse.ArgumentParser:
     """Создать отдельный парсер подкоманды ``dgst``."""
     parser = RussianArgumentParser(
         prog="cryptocore dgst",
-        description="Потоковое вычисление криптографического хеша файла.",
+        description="Потоковое вычисление хеша или HMAC файла и проверка HMAC.",
         allow_abbrev=False,
     )
     parser.add_argument(
         "--algorithm",
-        required=True,
         choices=ALGORITHMS,
-        help="алгоритм хеширования",
+        help="алгоритм хеширования; для --hmac по умолчанию sha256",
     )
+    parser.add_argument("--hmac", action="store_true", help="вычислить HMAC-SHA256 с секретным ключом")
+    parser.add_argument("--key", type=_hex_hmac_key, metavar="KEY",
+                        help="ключ HMAC произвольной длины в hex; обязателен с --hmac")
+    parser.add_argument("--verify", type=Path, metavar="FILE",
+                        help="проверить HMAC по файлу с ожидаемым тегом")
     parser.add_argument(
         "--input",
         required=True,
@@ -242,14 +253,22 @@ def run(args: argparse.Namespace) -> Path:
 
 def run_digest(args: argparse.Namespace) -> Optional[Path]:
     """Выполнить подкоманду хеширования и вывести строку формата *sum."""
+    expected = read_expected_hmac(args.verify) if args.verify is not None else None
     input_label = str(args.input)
     if input_label == "-":
         source = getattr(sys.stdin, "buffer", sys.stdin)
-        digest = hash_stream(source, args.algorithm)
+        digest = hmac_stream(source, args.key) if args.hmac else hash_stream(source, args.algorithm)
     else:
-        digest = hash_file(args.input, args.algorithm)
+        digest = hmac_file(args.input, args.key) if args.hmac else hash_file(args.input, args.algorithm)
 
-    line = f"{digest}  {input_label}\n"
+    if expected is not None:
+        if not verify_hmac(digest, expected):
+            raise CryptoCoreError("проверка HMAC не пройдена: неверный ключ или изменённые данные")
+        print("[OK] Проверка HMAC пройдена")
+        return None
+
+    separator = " " if args.hmac else "  "
+    line = f"{digest}{separator}{input_label}\n"
     if args.output is None:
         sys.stdout.write(line)
         return None
@@ -263,6 +282,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if arguments[:1] == ["dgst"]:
         parser = build_digest_parser()
         args = parser.parse_args(arguments[1:])
+        if args.hmac:
+            if args.key is None:
+                parser.error("при использовании --hmac необходимо указать --key")
+            if args.algorithm is None:
+                args.algorithm = "sha256"
+            elif args.algorithm != "sha256":
+                parser.error("HMAC поддерживает только алгоритм sha256")
+        else:
+            if args.key is not None:
+                parser.error("--key для команды dgst разрешён только вместе с --hmac")
+            if args.verify is not None:
+                parser.error("--verify разрешён только вместе с --hmac")
+            if args.algorithm is None:
+                parser.error("не указаны обязательные аргументы: --algorithm")
+        if args.verify is not None and args.output is not None:
+            parser.error("--verify нельзя использовать вместе с --output")
         try:
             run_digest(args)
         except CryptoCoreError as error:
