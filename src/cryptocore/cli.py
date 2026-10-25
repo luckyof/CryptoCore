@@ -17,6 +17,10 @@ from cryptocore.mac import cmac_file, cmac_stream, read_expected_cmac, verify_cm
 from cryptocore.aead import EncryptThenMAC, process_gcm_file
 from cryptocore.aead.etm import ETM_MODES
 from cryptocore.key_files import load_key_file, save_key_file
+from cryptocore.key_files import save_binary_key_file
+from cryptocore.kdf import pbkdf2_hmac_sha256
+from cryptocore.kdf.pbkdf2 import MAX_LENGTH
+from cryptocore.kdf.passwords import read_password, wipe
 from cryptocore.modes.authenticated import (
     encrypt_cbc_hmac, decrypt_cbc_hmac, encrypt_ctr_hmac, decrypt_ctr_hmac,
     DEFAULT_SEGMENT_SIZE, MAX_SEGMENT_SIZE,
@@ -199,6 +203,79 @@ def build_digest_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _derive_integer(value: str) -> int:
+    try:
+        if re.fullmatch(r"[0-9]+", value) is None:
+            raise ValueError
+        number = int(value)
+        if number < 1:
+            raise ValueError
+        return number
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("значение должно быть положительным целым числом") from error
+
+
+def _derive_length(value: str) -> int:
+    length = _derive_integer(value)
+    if length > MAX_LENGTH:
+        raise argparse.ArgumentTypeError(f"длина ключа не должна превышать {MAX_LENGTH} байт")
+    return length
+
+
+def _derive_salt(value: str) -> bytes:
+    if re.fullmatch(r"(?:[0-9a-fA-F]{2})*", value) is None:
+        raise argparse.ArgumentTypeError("salt должен содержать чётное число hex-символов без пробелов")
+    return bytes.fromhex(value)
+
+
+def _environment_name(value: str) -> str:
+    if not value or "=" in value or "\x00" in value:
+        raise argparse.ArgumentTypeError("некорректное имя переменной окружения")
+    return value
+
+
+def build_derive_parser() -> argparse.ArgumentParser:
+    parser = RussianArgumentParser(
+        prog="cryptocore derive", description="Получение ключа PBKDF2-HMAC-SHA256 из пароля.",
+        allow_abbrev=False,
+    )
+    parser.add_argument("--algorithm", choices=("pbkdf2",), default="pbkdf2",
+                        help="алгоритм получения ключа (по умолчанию pbkdf2)")
+    passwords = parser.add_mutually_exclusive_group(required=True)
+    passwords.add_argument("--password", help="пароль в UTF-8; может быть виден в аргументах процесса")
+    passwords.add_argument("--password-file", type=Path, help="файл с точными байтами пароля, без удаления переводов строк")
+    passwords.add_argument("--password-env", type=_environment_name, metavar="NAME",
+                           help="имя переменной окружения с паролем")
+    parser.add_argument("--salt", type=_derive_salt, help="salt в hex; по умолчанию 16 случайных байт")
+    parser.add_argument("--iterations", type=_derive_integer, default=100000,
+                        help="число итераций, по умолчанию 100000 (учебное значение)")
+    parser.add_argument("--length", type=_derive_length, default=32, help="длина ключа в байтах, по умолчанию 32")
+    parser.add_argument("--output", type=Path, help="новый защищённый файл с сырыми байтами ключа, без salt")
+    return parser
+
+
+def run_derive(args: argparse.Namespace) -> None:
+    """Вывести KEY_HEX  SALT_HEX; при --output дополнительно сохранить бинарный ключ."""
+    if args.output is not None and (args.output.exists() or args.output.is_symlink()):
+        raise CryptoCoreError("для производного ключа требуется новый файл: перезапись запрещена")
+    password = read_password(args)
+    try:
+        salt = generate_random_bytes(16) if args.salt is None else args.salt
+        if args.iterations < 100000:
+            print("cryptocore: предупреждение: число итераций ниже учебного значения 100000; только для тестов",
+                  file=sys.stderr)
+        if len(salt) < 16:
+            print("cryptocore: предупреждение: salt короче 16 байт; используйте случайный salt для реальных данных",
+                  file=sys.stderr)
+        key = pbkdf2_hmac_sha256(password, salt, args.iterations, args.length)
+        if args.output is not None:
+            save_binary_key_file(args.output, key)
+        print(f"{key.hex()}  {salt.hex()}")
+    finally:
+        wipe(password)
+        args.password = None
+
+
 def _default_output(input_path: Path, encrypting: bool) -> Path:
     suffix = ".enc" if encrypting else ".dec"
     return input_path.with_name(input_path.name + suffix)
@@ -313,6 +390,21 @@ def run_digest(args: argparse.Namespace) -> Optional[Path]:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     _configure_console_encoding()
     arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments[:1] == ["derive"]:
+        parser = build_derive_parser()
+        args = parser.parse_args(arguments[1:])
+        try:
+            run_derive(args)
+        except (CryptoCoreError, ValueError, TypeError) as error:
+            print(f"cryptocore: ошибка: {error}", file=sys.stderr)
+            return 1
+        except MemoryError:
+            print("cryptocore: ошибка: недостаточно памяти для получения ключа", file=sys.stderr)
+            return 1
+        except OSError:
+            print("cryptocore: ошибка: не удалось выполнить файловую операцию получения ключа", file=sys.stderr)
+            return 1
+        return 0
     if arguments[:1] == ["dgst"]:
         parser = build_digest_parser()
         args = parser.parse_args(arguments[1:])

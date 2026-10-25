@@ -29,6 +29,18 @@ def _restrict_windows_access(path: Path) -> None:
 def save_key_file(path: Path, key: bytes) -> None:
     """Создать новый файл; не перезаписывать существующие файлы и ссылки."""
     _validate_key(key)
+    _save_secret_file(path, key.hex().encode("ascii") + b"\n")
+
+
+def save_binary_key_file(path: Path, key: bytes) -> None:
+    """Сохранить производный ключ произвольной длины как сырые байты."""
+    if not isinstance(key, bytes) or not key:
+        raise CryptoCoreError("бинарный ключ должен быть непустой байтовой последовательностью")
+    _save_secret_file(path, key)
+
+
+def _save_secret_file(path: Path, data: bytes) -> None:
+    """Ограничить доступ до записи секрета; создавать только новый файл."""
     descriptor = None
     created = False
     try:
@@ -41,7 +53,7 @@ def save_key_file(path: Path, key: bytes) -> None:
             os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "wb") as destination:
             descriptor = None
-            destination.write(key.hex().encode("ascii") + b"\n")
+            destination.write(data)
     except (OSError, subprocess.SubprocessError, CryptoCoreError) as error:
         if descriptor is not None:
             os.close(descriptor)

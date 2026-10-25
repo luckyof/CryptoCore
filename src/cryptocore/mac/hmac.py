@@ -25,7 +25,9 @@ class HMAC:
             normalized = SHA256(normalized).digest()
         self._key_block = normalized.ljust(self.block_size, b"\x00")
         self._opad = bytes(byte ^ 0x5C for byte in self._key_block)
-        self._inner = SHA256(bytes(byte ^ 0x36 for byte in self._key_block))
+        self._inner_template = SHA256(bytes(byte ^ 0x36 for byte in self._key_block))
+        self._outer_template = SHA256(self._opad)
+        self._inner = self._inner_template.copy()
 
     def update(self, data: BytesLike) -> "HMAC":
         """Добавить фрагмент сообщения без накопления всего сообщения."""
@@ -34,7 +36,7 @@ class HMAC:
 
     def digest(self) -> bytes:
         """Получить полный 32-байтный тег, не изменяя потоковое состояние."""
-        outer = SHA256(self._opad)
+        outer = self._outer_template.copy()
         outer.update(self._inner.digest())
         return outer.digest()
 
@@ -44,7 +46,15 @@ class HMAC:
 
     def compute(self, message: BytesLike) -> str:
         """Вычислить тег отдельного сообщения с тем же ключом."""
-        return HMAC(self._key_block).update(message).hexdigest()
+        return self.digest_message(message).hex()
+
+    def digest_message(self, message: BytesLike) -> bytes:
+        """Вычислить отдельный HMAC с предвычисленными ipad/opad для PBKDF2."""
+        inner = self._inner_template.copy()
+        inner.update(_bytes(message))
+        outer = self._outer_template.copy()
+        outer.update(inner.digest())
+        return outer.digest()
 
 
 def hmac_sha256(key: BytesLike, data: BytesLike) -> bytes:

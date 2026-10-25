@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cryptocore"
-version = "0.6.1"
-description = "Консольный криптографический провайдер AES, AEAD, SHA-256, SHA3-256, HMAC и CMAC"
+version = "0.7.0"
+description = "Криптографический провайдер AES, AEAD, SHA-256, SHA3-256, MAC и KDF"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [

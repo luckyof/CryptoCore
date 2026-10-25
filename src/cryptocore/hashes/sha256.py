@@ -1,6 +1,7 @@
 """Потоковая реализация SHA-256 по NIST FIPS 180-4."""
 
 from typing import Union
+from struct import unpack
 
 
 BytesLike = Union[bytes, bytearray, memoryview]
@@ -68,29 +69,30 @@ class SHA256:
         if len(block) != 64:
             raise ValueError("блок SHA-256 должен содержать ровно 64 байта")
 
-        words = [int.from_bytes(block[index:index + 4], "big")
-                 for index in range(0, 64, 4)]
+        words = list(unpack(">16I", block))
         for index in range(16, 64):
             value_15 = words[index - 15]
             value_2 = words[index - 2]
             sigma0 = (
-                _rotate_right(value_15, 7)
-                ^ _rotate_right(value_15, 18)
+                ((value_15 >> 7) | (value_15 << 25))
+                ^ ((value_15 >> 18) | (value_15 << 14))
                 ^ (value_15 >> 3)
             )
             sigma1 = (
-                _rotate_right(value_2, 17)
-                ^ _rotate_right(value_2, 19)
+                ((value_2 >> 17) | (value_2 << 15))
+                ^ ((value_2 >> 19) | (value_2 << 13))
                 ^ (value_2 >> 10)
             )
             words.append((words[index - 16] + sigma0 + words[index - 7] + sigma1) & _MASK32)
 
         a, b, c, d, e, f, g, h = state
-        for index in range(64):
-            sum1 = _rotate_right(e, 6) ^ _rotate_right(e, 11) ^ _rotate_right(e, 25)
+        # Повороты развёрнуты, чтобы не делать сотни вызовов функций на блок.
+        # Лишние старшие биты отсекаются общим & _MASK32 после сложения.
+        for constant, word in zip(_ROUND_CONSTANTS, words):
+            sum1 = ((e >> 6) | (e << 26)) ^ ((e >> 11) | (e << 21)) ^ ((e >> 25) | (e << 7))
             choice = (e & f) ^ ((~e) & g)
-            temporary1 = (h + sum1 + choice + _ROUND_CONSTANTS[index] + words[index]) & _MASK32
-            sum0 = _rotate_right(a, 2) ^ _rotate_right(a, 13) ^ _rotate_right(a, 22)
+            temporary1 = (h + sum1 + choice + constant + word) & _MASK32
+            sum0 = ((a >> 2) | (a << 30)) ^ ((a >> 13) | (a << 19)) ^ ((a >> 22) | (a << 10))
             majority = (a & b) ^ (a & c) ^ (b & c)
             temporary2 = (sum0 + majority) & _MASK32
             h, g, f, e, d, c, b, a = (
@@ -128,6 +130,14 @@ class SHA256:
         for offset in range(0, len(padded), self.block_size):
             self._compress(state, padded[offset:offset + self.block_size])
         return b"".join(value.to_bytes(4, "big") for value in state)
+
+    def copy(self) -> "SHA256":
+        """Скопировать состояние без повторного сжатия уже обработанных блоков."""
+        duplicate = SHA256.__new__(SHA256)
+        duplicate._state = self._state.copy()
+        duplicate._buffer = self._buffer.copy()
+        duplicate._message_length = self._message_length
+        return duplicate
 
     def hexdigest(self) -> str:
         """Вернуть хеш в виде 64 hex-символов нижнего регистра."""
